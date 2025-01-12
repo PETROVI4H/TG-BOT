@@ -1,0 +1,18 @@
+import telebot
+
+bot = telebot.TeleBot('8131849234:AAEAduQ2nGxxaAgWRsW35nf9Lq1YoavNZfk')
+
+# Удаление webhook перед запуском polling
+bot.remove_webhook()
+
+@bot.message_handler(commands=['start'])
+def main(message):
+    bot.send_message(message.chat.id, 'Здравствуйте!')
+
+
+@bot.message_handler(commands=['help'])
+def main(message):
+    bot.send_message(message.chat.id, 'Help Information')
+
+
+bot.polling(none_stop=True)
