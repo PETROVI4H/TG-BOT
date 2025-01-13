@@ -1,5 +1,7 @@
+import time
 import telebot
 import webbrowser
+from telebot import types
 
 bot = telebot.TeleBot('8131849234:AAEAduQ2nGxxaAgWRsW35nf9Lq1YoavNZfk')
 
@@ -7,23 +9,31 @@ bot.remove_webhook()
 
 @bot.message_handler(commands=['web'])
 def site(message):
-    bot.send_message(message.chat.id, '<b>Журнал открыт</b>', parse_mode='html')
+    bot.reply_to(message, '<b>Открытие...</b>', parse_mode='html')
     webbrowser.open('https://omni.top-academy.ru/login/index#/')
+
 
 @bot.message_handler(commands=['start'])
 def main(message):
-    bot.send_message(message.chat.id, f'Здравствуйте! {message.from_user.first_name} {message.from_user.last_name}')
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton('Перейти в Omni', url='https://omni.top-academy.ru/login/index#/'))
+    bot.send_message(message.chat.id, f'Здравствуйте! {message.from_user.first_name} {message.from_user.last_name}', reply_markup=markup)
+
 
 
 @bot.message_handler(commands=['help'])
-def main(message):
-    bot.send_message(message.chat.id, '<b><u>Help Information</u></b>', parse_mode='html')
+def about(message):
+    bot.send_message(message.chat.id, '<b><u>Help Information:</u></b>', parse_mode='html')
+    time.sleep(2)
+    bot.send_message(message.chat.id, '<b>Используйте кнопку перейти в ОМНИ внизу экрана или команду /start или привет для визуализации подсказки</b>', parse_mode='html')
 
 
 @bot.message_handler()
 def info(message):
+    markup = types.InlineKeyboardMarkup()
     if message.text.lower() == 'привет':
-        bot.send_message(message.chat.id, f'Здравствуйте! {message.from_user.first_name} {message.from_user.last_name}')
+        markup.add(types.InlineKeyboardButton('Перейти в Omni', url='https://omni.top-academy.ru/login/index#/'))
+        bot.send_message(message.chat.id, f'Здравствуйте! {message.from_user.first_name} {message.from_user.last_name}', reply_markup=markup)
     elif message.text.lower() == '?':
         bot.send_message(message.chat.id, '<b><u>Help Information</u></b>', parse_mode='html')
 
