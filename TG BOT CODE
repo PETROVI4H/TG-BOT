@@ -14,11 +14,10 @@ def site(message):
 
 
 @bot.message_handler(commands=['start'])
-def main(message):
+def start(message):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton('Перейти в Omni', url='https://omni.top-academy.ru/login/index#/'))
     bot.send_message(message.chat.id, f'Здравствуйте! {message.from_user.first_name} {message.from_user.last_name}', reply_markup=markup)
-
 
 
 @bot.message_handler(commands=['help'])
