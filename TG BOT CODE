@@ -8,7 +8,6 @@ bot = telebot.TeleBot('8131849234:AAEAduQ2nGxxaAgWRsW35nf9Lq1YoavNZfk')
 
 bot.remove_webhook()
 
-# Храним Excel файл в памяти
 uploaded_file_path = None
 df = None
 
@@ -33,20 +32,16 @@ def about(message):
 def handle_document(message):
     global uploaded_file_path, df
 
-    # Проверяем, что файл имеет расширение .xlsx
     file_info = bot.get_file(message.document.file_id)
     file = bot.download_file(file_info.file_path)
 
-    # Сохраняем файл локально
     with open("uploaded_file.xlsx", "wb") as f:
         f.write(file)
 
-    # Пробуем прочитать Excel файл
     try:
         df = pd.read_excel("uploaded_file.xlsx")
-        uploaded_file_path = "uploaded_file.xlsx"  # Сохраняем путь к файлу для последующих операций
+        uploaded_file_path = "uploaded_file.xlsx"
 
-        # Выводим первые 5 строк для анализа
         bot.send_message(message.chat.id, f"Файл загружен. Пример данных:\n{df.head()}")
     except Exception as e:
         bot.send_message(message.chat.id, f"Ошибка при обработке файла: {e}")
@@ -59,42 +54,32 @@ def compare_text(message):
         bot.send_message(message.chat.id, "Сначала загрузите файл EXEL")
         return
 
-    # Запрашиваем у пользователя текст для сравнения
     bot.send_message(message.chat.id, "Введите текст для сравнения с данными из Excel:")
 
-    # Ожидаем следующий текст от пользователя
     bot.register_next_step_handler(message, process_comparison)
 
 def process_comparison(message):
     global df
 
-    # Получаем текст от пользователя
     user_text = message.text.strip()
 
-    # Переменная для хранения строк, где найдено совпадение
     matching_rows = []
 
-    # Проходим по всем столбцам и проверяем на совпадения
     for column in df.columns:
-        # Преобразуем значения в строковый тип для безопасного использования .str.contains()
         column_data = df[column].astype(str)
 
-        # Ищем совпадения в строках
         matching_column_rows = df[column_data.str.contains(user_text, na=False, case=False, regex=True)]
 
         if not matching_column_rows.empty:
             for index, row in matching_column_rows.iterrows():
-                # Формируем строку с контекстом, включая имя столбца и отрывок из строки
                 context = f"Столбец: {column}\n"
                 context += f"Строка {index}: {row[column]}\n"
 
-                # Добавляем отрывок в список совпадений
                 matching_rows.append(context)
 
     if matching_rows:
-        # Отправляем все совпадения пользователю
         bot.send_message(message.chat.id, "Текст найден в Excel! Вот примеры:\n")
-        for row in matching_rows[:5]:  # Отправляем только первые 5 совпадений, чтобы не перегружать чат
+        for row in matching_rows[:5]:
             bot.send_message(message.chat.id, row)
         if len(matching_rows) > 5:
             bot.send_message(message.chat.id, "... и другие совпадения. Вы можете запросить больше.")
