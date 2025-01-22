@@ -2,6 +2,7 @@ import time
 import telebot
 import webbrowser
 import pandas as pd
+import os
 from telebot import types
 
 bot = telebot.TeleBot('8131849234:AAEAduQ2nGxxaAgWRsW35nf9Lq1YoavNZfk')
@@ -10,6 +11,7 @@ bot.remove_webhook()
 
 uploaded_file_path = None
 df = None
+all_matching_rows = []
 
 @bot.message_handler(commands=['web'])
 def site(message):
@@ -20,35 +22,76 @@ def site(message):
 def start(message):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton('Перейти в Omni', url='https://omni.top-academy.ru/login/index#/'))
-    bot.send_message(message.chat.id, f'Здравствуйте! {message.from_user.first_name} {message.from_user.last_name}', reply_markup=markup)
+
+    welcome_message = (
+        f'Здравствуйте! {message.from_user.first_name} {message.from_user.last_name}\n\n'
+        'Я помогу вам работать с Excel файлами. Для начала, пожалуйста, загрузите файл Excel с помощью кнопки ниже.'
+        '\nПосле загрузки файла вы сможете выполнить команду /compare для поиска данных в нем.'
+    )
+
+    bot.send_message(message.chat.id, welcome_message, reply_markup=markup)
 
 @bot.message_handler(commands=['help'])
 def about(message):
-    bot.send_message(message.chat.id, '<b><u>Help Information:</u></b>', parse_mode='html')
-    time.sleep(2)
-    bot.send_message(message.chat.id, '<b>Используйте кнопку перейти в OMNI внизу экрана или команду /start. Так же используйте /web для перехода на официальный сайт преподавателя OMNI. Загрузите файл EXEL, и бот автоматически распознает его, так же есть возможность сравнить текст введенный пользователем при помощи команды /compare, и уже имеющийся в файле, для получения больших результатов примера из таблицы, используйте</b>', parse_mode='html')
+    help_message = (
+        "<b><u>Информация о боте:</u></b>\n\n"
+        "Этот бот поможет вам работать с Excel файлами и искать данные в них. Вот список доступных команд:\n\n"
+        "<b>/start</b> - Стартовая команда, которая приветствует вас и дает инструкции по загрузке файла.\n"
+        "<b>/web</b> - Открывает официальный сайт преподавателя OMNI.\n"
+        "<b>/help</b> - Выводит информацию о доступных функциях бота.\n"
+        "<b>/compare</b> - Позволяет ввести текст для поиска в загруженном Excel файле. Бот покажет строки, содержащие этот текст.\n"
+        "<b>/more</b> - Команда для получения дополнительных результатов поиска, если они не были выведены сразу.\n\n"
+        "Дополнительные функции:\n\n"
+        "<b>1. Загрузка Excel файла:</b>\n"
+        "Загрузите файл Excel, и бот автоматически распознает его, сохраняет и предоставляет доступ к данным.\n"
+        "Просто отправьте файл в чат, и бот обработает его для дальнейшего использования.\n\n"
+        "<b>2. Поиск по данным:</b>\n"
+        "После загрузки файла используйте команду /compare, чтобы ввести текст, который вы хотите найти в данных.\n"
+        "Бот найдет все строки, которые содержат введенный вами текст и предоставит вам примеры.\n\n"
+        "<b>3. Дополнительные результаты:</b>\n"
+        "Если совпадений слишком много для отображения сразу, вы можете использовать команду /more для получения дополнительных строк из найденных совпадений.\n"
+        "Если после вывода всех совпадений вам нужно что-то еще, просто напишите новый запрос для поиска.\n\n"
+        "<b>Примечание:</b> Пожалуйста, убедитесь, что файл является файлом Excel (.xlsx или .xls), прежде чем его загружать.\n"
+        "Вы также можете запросить больше результатов, если их будет слишком много для отображения сразу.\n\n"
+        "<b>Пример использования:</b>\n"
+        "1. Загрузите файл Excel.\n"
+        "2. Введите команду /compare и укажите текст для поиска.\n"
+        "3. Бот выведет все строки с этим текстом из файла.\n"
+        "4. Если совпадений будет много, используйте команду /more для отображения всех результатов.\n"
+        "5. Если вы хотите провести новый поиск, введите текст для поиска, и бот продолжит работать.\n\n"
+    )
+    bot.send_message(message.chat.id, help_message, parse_mode='html')
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
-    global uploaded_file_path, df
+    global uploaded_file_path, df, all_matching_rows
+
+    user_id = message.from_user.id
+    user_dir = f'./user_files/{user_id}'
+
+    os.makedirs(user_dir, exist_ok=True)
 
     file_info = bot.get_file(message.document.file_id)
     file = bot.download_file(file_info.file_path)
 
-    with open("uploaded_file.xlsx", "wb") as f:
+    file_name = message.document.file_name
+    file_path = os.path.join(user_dir, file_name)
+
+    with open(file_path, 'wb') as f:
         f.write(file)
 
     try:
-        df = pd.read_excel("uploaded_file.xlsx")
-        uploaded_file_path = "uploaded_file.xlsx"
+        df = pd.read_excel(file_path)
+        uploaded_file_path = file_path
+        all_matching_rows = []
 
-        bot.send_message(message.chat.id, f"Файл загружен. Пример данных:\n{df.head()}")
+        bot.send_message(message.chat.id, f"Файл загружен и сохранен как {file_name}. Пример данных:\n{df.head()}")
     except Exception as e:
         bot.send_message(message.chat.id, f"Ошибка при обработке файла: {e}")
 
 @bot.message_handler(commands=['compare'])
 def compare_text(message):
-    global df
+    global df, all_matching_rows
 
     if df is None:
         bot.send_message(message.chat.id, "Сначала загрузите файл EXEL")
@@ -59,10 +102,9 @@ def compare_text(message):
     bot.register_next_step_handler(message, process_comparison)
 
 def process_comparison(message):
-    global df
+    global df, all_matching_rows
 
     user_text = message.text.strip()
-
     matching_rows = []
 
     for column in df.columns:
@@ -74,27 +116,44 @@ def process_comparison(message):
             for index, row in matching_column_rows.iterrows():
                 context = f"Столбец: {column}\n"
                 context += f"Строка {index}: {row[column]}\n"
-
                 matching_rows.append(context)
 
     if matching_rows:
+        all_matching_rows = matching_rows
         bot.send_message(message.chat.id, "Текст найден в Excel! Вот примеры:\n")
         for row in matching_rows[:5]:
             bot.send_message(message.chat.id, row)
         if len(matching_rows) > 5:
-            bot.send_message(message.chat.id, "... и другие совпадения. Вы можете запросить больше.")
+            bot.send_message(message.chat.id, "... и другие совпадения. Вы можете запросить больше с помощью команды /more.")
     else:
         bot.send_message(message.chat.id, "Текст не найден в Excel.")
+
+@bot.message_handler(commands=['more'])
+def more_results(message):
+    global all_matching_rows
+
+    if not all_matching_rows:
+        bot.send_message(message.chat.id, "Сначала выполните команду /compare, чтобы найти совпадения.")
+        return
+
+    bot.send_message(message.chat.id, "Вот дополнительные совпадения:")
+
+    for row in all_matching_rows[5:]:
+        bot.send_message(message.chat.id, row)
+
+    bot.send_message(message.chat.id, "Это все совпадения. Если вам нужно что-то еще, напишите.")
 
 @bot.message_handler()
 def info(message):
     markup = types.InlineKeyboardMarkup()
     if message.text.lower() == 'привет':
         markup.add(types.InlineKeyboardButton('Перейти в Omni', url='https://omni.top-academy.ru/login/index#/'))
-        bot.send_message(message.chat.id, f'Здравствуйте! {message.from_user.first_name} {message.from_user.last_name}', reply_markup=markup)
+        bot.send_message(message.chat.id, f'Здравствуйте! {message.from_user.first_name} {message.from_user.last_name}',
+                         reply_markup=markup)
     elif message.text.lower() == '?':
         bot.send_message(message.chat.id, '<b><u>Help Information</u></b>', parse_mode='html')
     else:
-        bot.send_message(message.chat.id, "Неизвестная команда. Пожалуйста, используйте команду /help для получения помощи.")
+        bot.send_message(message.chat.id,
+                         "Неизвестная команда. Пожалуйста, используйте команду /help для получения помощи.")
 
 bot.polling(none_stop=True)
