@@ -3,7 +3,13 @@ import telebot
 import webbrowser
 import pandas as pd
 import os
+import requests
+import re
 from telebot import types
+from io import BytesIO
+from docx import Document
+from PyPDF2 import PdfReader
+from fuzzywuzzy import fuzz
 
 bot = telebot.TeleBot('8131849234:AAEAduQ2nGxxaAgWRsW35nf9Lq1YoavNZfk')
 
@@ -12,6 +18,9 @@ bot.remove_webhook()
 uploaded_file_path = None
 df = None
 all_matching_rows = []
+
+def sanitize_filename(file_url):
+    return re.sub(r'[<>:"/\\|?*#]', '_', file_url)
 
 @bot.message_handler(commands=['web'])
 def site(message):
@@ -25,8 +34,8 @@ def start(message):
 
     welcome_message = (
         f'Здравствуйте! {message.from_user.first_name} {message.from_user.last_name}\n\n'
-        'Я помогу вам работать с Excel файлами. Для начала, пожалуйста, загрузите файл Excel с помощью кнопки ниже.'
-        '\nПосле загрузки файла вы сможете выполнить команду /compare для поиска данных в нем.'
+        'Я помогу вам работать с документами. Для начала, пожалуйста, загрузите файл или отправьте ссылку на документ.'
+        '\nПосле загрузки вы сможете выполнить команду /compare для поиска данных в документе или использовать новый инструмент для проверки текста.'
     )
 
     bot.send_message(message.chat.id, welcome_message, reply_markup=markup)
@@ -35,32 +44,70 @@ def start(message):
 def about(message):
     help_message = (
         "<b><u>Информация о боте:</u></b>\n\n"
-        "Этот бот поможет вам работать с Excel файлами и искать данные в них. Вот список доступных команд:\n\n"
-        "<b>/start</b> - Стартовая команда, которая приветствует вас и дает инструкции по загрузке файла.\n"
+        "Этот бот поможет вам работать с различными документами, включая Excel, Google Docs и другие. Вот список доступных команд:\n\n"
+        "<b>/start</b> - Стартовая команда, которая приветствует вас и дает инструкции по загрузке документа.\n"
         "<b>/web</b> - Открывает официальный сайт преподавателя OMNI.\n"
         "<b>/help</b> - Выводит информацию о доступных функциях бота.\n"
-        "<b>/compare</b> - Позволяет ввести текст для поиска в загруженном Excel файле. Бот покажет строки, содержащие этот текст.\n"
-        "<b>/more</b> - Команда для получения дополнительных результатов поиска, если они не были выведены сразу.\n\n"
-        "Дополнительные функции:\n\n"
-        "<b>1. Загрузка Excel файла:</b>\n"
-        "Загрузите файл Excel, и бот автоматически распознает его, сохраняет и предоставляет доступ к данным.\n"
-        "Просто отправьте файл в чат, и бот обработает его для дальнейшего использования.\n\n"
-        "<b>2. Поиск по данным:</b>\n"
-        "После загрузки файла используйте команду /compare, чтобы ввести текст, который вы хотите найти в данных.\n"
-        "Бот найдет все строки, которые содержат введенный вами текст и предоставит вам примеры.\n\n"
-        "<b>3. Дополнительные результаты:</b>\n"
-        "Если совпадений слишком много для отображения сразу, вы можете использовать команду /more для получения дополнительных строк из найденных совпадений.\n"
-        "Если после вывода всех совпадений вам нужно что-то еще, просто напишите новый запрос для поиска.\n\n"
-        "<b>Примечание:</b> Пожалуйста, убедитесь, что файл является файлом Excel (.xlsx или .xls), прежде чем его загружать.\n"
-        "Вы также можете запросить больше результатов, если их будет слишком много для отображения сразу.\n\n"
-        "<b>Пример использования:</b>\n"
-        "1. Загрузите файл Excel.\n"
-        "2. Введите команду /compare и укажите текст для поиска.\n"
-        "3. Бот выведет все строки с этим текстом из файла.\n"
-        "4. Если совпадений будет много, используйте команду /more для отображения всех результатов.\n"
-        "5. Если вы хотите провести новый поиск, введите текст для поиска, и бот продолжит работать.\n\n"
+        "<b>/compare</b> - Позволяет ввести текст для поиска в загруженном документе. Бот покажет строки, содержащие этот текст.\n"
+        "<b>/more</b> - Позволяет получить дополнительные результаты поиска, если они не были выведены сразу.\n"
+        "<b>/url</b> - Позволяет отправить ссылку на файл (Google Docs, PDF, Word и другие), который бот загрузит и проанализирует.\n\n"
+        "<b>После загрузки файла:</b>\n"
+        "Вы сможете использовать команды /compare для поиска текста или /check для проверки введенного вами текста с файлом.\n"
     )
     bot.send_message(message.chat.id, help_message, parse_mode='html')
+
+@bot.message_handler(commands=['url'])
+def ask_for_url(message):
+    bot.send_message(message.chat.id, "Пожалуйста, отправьте ссылку на файл (Google Docs, PDF, Word и другие), чтобы я мог его загрузить и проанализировать.")
+
+@bot.message_handler(func=lambda message: message.text.startswith('http'))
+def handle_url(message):
+    global uploaded_file_path, df, all_matching_rows
+
+    file_url = message.text.strip()
+
+    try:
+        response = requests.get(file_url)
+
+        if response.status_code == 200:
+            content_type = response.headers.get('Content-Type', '').lower()
+
+            if 'excel' in content_type:
+                user_id = message.from_user.id
+                user_dir = f'./user_files/{user_id}'
+
+                os.makedirs(user_dir, exist_ok=True)
+
+                file_name = sanitize_filename(file_url.split("/")[-1])
+                file_path = os.path.join(user_dir, file_name)
+
+                with open(file_path, 'wb') as f:
+                    f.write(response.content)
+
+                try:
+                    df = pd.read_excel(file_path, engine="openpyxl")
+                    uploaded_file_path = file_path
+                    all_matching_rows = []
+                    bot.send_message(message.chat.id, f"Файл Excel загружен: {file_name}. Пример данных:\n{df.head()}")
+                except Exception as e:
+                    bot.send_message(message.chat.id, f"Ошибка при обработке Excel файла: {e}")
+                    return
+
+            elif 'pdf' in content_type:
+                bot.send_message(message.chat.id, "Я сейчас не могу анализировать PDF файлы.")
+            elif 'msword' in content_type or 'word' in content_type:
+                doc = Document(BytesIO(response.content))
+                full_text = '\n'.join([para.text for para in doc.paragraphs])
+                bot.send_message(message.chat.id, f"Текст из Word документа:\n{full_text[:1000]}")
+            elif 'html' in content_type:
+                bot.send_message(message.chat.id, "Документ HTML (например, Google Docs) не может быть проанализирован напрямую.")
+            else:
+                bot.send_message(message.chat.id, "Файл имеет неподдерживаемый формат или не может быть проанализирован.")
+        else:
+            bot.send_message(message.chat.id, "Не удалось загрузить файл по предоставленной ссылке. Пожалуйста, проверьте ссылку.")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Ошибка при обработке файла: {e}")
+        return
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
@@ -81,23 +128,29 @@ def handle_document(message):
         f.write(file)
 
     try:
-        df = pd.read_excel(file_path)
-        uploaded_file_path = file_path
-        all_matching_rows = []
-
-        bot.send_message(message.chat.id, f"Файл загружен и сохранен как {file_name}. Пример данных:\n{df.head()}")
+        if file_name.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(file_path, engine="openpyxl")
+            uploaded_file_path = file_path
+            all_matching_rows = []
+            bot.send_message(message.chat.id, f"Файл загружен и сохранен как {file_name}. Пример данных:\n{df.head()}")
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup.add(types.KeyboardButton("Проверить наличие текста в файле"))
+            markup.add(types.KeyboardButton("Проверить правильность текста"))
+            bot.send_message(message.chat.id, "Выберите один из вариантов:", reply_markup=markup)
+        else:
+            bot.send_message(message.chat.id, "Поддерживаются только Excel файлы (.xlsx или .xls).")
     except Exception as e:
         bot.send_message(message.chat.id, f"Ошибка при обработке файла: {e}")
 
-@bot.message_handler(commands=['compare'])
+@bot.message_handler(func=lambda message: message.text == "Проверить наличие текста в файле")
 def compare_text(message):
     global df, all_matching_rows
 
     if df is None:
-        bot.send_message(message.chat.id, "Сначала загрузите файл EXEL")
+        bot.send_message(message.chat.id, "Сначала загрузите файл.")
         return
 
-    bot.send_message(message.chat.id, "Введите текст для сравнения с данными из Excel:")
+    bot.send_message(message.chat.id, "Введите текст для сравнения с данными из документа:")
 
     bot.register_next_step_handler(message, process_comparison)
 
@@ -120,13 +173,54 @@ def process_comparison(message):
 
     if matching_rows:
         all_matching_rows = matching_rows
-        bot.send_message(message.chat.id, "Текст найден в Excel! Вот примеры:\n")
+        bot.send_message(message.chat.id, "Текст найден! Вот примеры:\n")
         for row in matching_rows[:5]:
             bot.send_message(message.chat.id, row)
         if len(matching_rows) > 5:
             bot.send_message(message.chat.id, "... и другие совпадения. Вы можете запросить больше с помощью команды /more.")
     else:
-        bot.send_message(message.chat.id, "Текст не найден в Excel.")
+        bot.send_message(message.chat.id, "Текст не найден.")
+
+@bot.message_handler(func=lambda message: message.text == "Проверить правильность текста")
+def check_text_correctness(message):
+    bot.send_message(message.chat.id, "Введите текст для проверки на наличие ошибок:")
+
+    bot.register_next_step_handler(message, process_text_correction)
+
+def process_text_correction(message):
+    global df
+
+    user_text = message.text.strip()
+    best_match = None
+    best_score = 0
+
+    for column in df.columns:
+        column_data = df[column].astype(str)
+
+        for value in column_data:
+            score = fuzz.ratio(user_text.lower(), value.lower())
+            if score > best_score:
+                best_score = score
+                best_match = value
+
+    if best_score >= 80:
+        bot.send_message(message.chat.id, f"Текст совпадает с файлом! Пример: {best_match}")
+    else:
+        bot.send_message(message.chat.id, "Текст написан неверно. Вот строка, которая максимально похожа:\n" + best_match)
+
+    check_lesson_topic(df, user_text, message)
+
+def check_lesson_topic(df, user_text, message):
+    lesson_keywords = ['урок', 'тема', 'Урок', 'Тема']
+    for column in df.columns:
+        column_data = df[column].astype(str)
+
+        for value in column_data:
+            if any(keyword in value for keyword in lesson_keywords):
+                bot.send_message(message.chat.id, f"Возможно, вы неправильно указали тему урока. В документе найдено: {value}")
+                return
+
+    bot.send_message(message.chat.id, "Тема урока не была найдена в документе.")
 
 @bot.message_handler(commands=['more'])
 def more_results(message):
@@ -136,24 +230,11 @@ def more_results(message):
         bot.send_message(message.chat.id, "Сначала выполните команду /compare, чтобы найти совпадения.")
         return
 
-    bot.send_message(message.chat.id, "Вот дополнительные совпадения:")
+    bot.send_message(message.chat.id, "Вот все совпадения:")
 
-    for row in all_matching_rows[5:]:
+    for row in all_matching_rows:
         bot.send_message(message.chat.id, row)
 
     bot.send_message(message.chat.id, "Это все совпадения. Если вам нужно что-то еще, напишите.")
-
-@bot.message_handler()
-def info(message):
-    markup = types.InlineKeyboardMarkup()
-    if message.text.lower() == 'привет':
-        markup.add(types.InlineKeyboardButton('Перейти в Omni', url='https://omni.top-academy.ru/login/index#/'))
-        bot.send_message(message.chat.id, f'Здравствуйте! {message.from_user.first_name} {message.from_user.last_name}',
-                         reply_markup=markup)
-    elif message.text.lower() == '?':
-        bot.send_message(message.chat.id, '<b><u>Help Information</u></b>', parse_mode='html')
-    else:
-        bot.send_message(message.chat.id,
-                         "Неизвестная команда. Пожалуйста, используйте команду /help для получения помощи.")
 
 bot.polling(none_stop=True)
