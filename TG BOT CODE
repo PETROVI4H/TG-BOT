@@ -1,15 +1,15 @@
 import time
 import telebot
-import webbrowser
-import pandas as pd
 import os
 import requests
 import re
 from telebot import types
 from io import BytesIO
+import pandas as pd
 from docx import Document
 from PyPDF2 import PdfReader
 from fuzzywuzzy import fuzz
+from pptx import Presentation
 
 bot = telebot.TeleBot('8131849234:AAEAduQ2nGxxaAgWRsW35nf9Lq1YoavNZfk')
 
@@ -21,11 +21,6 @@ all_matching_rows = []
 
 def sanitize_filename(file_url):
     return re.sub(r'[<>:"/\\|?*#]', '_', file_url)
-
-@bot.message_handler(commands=['web'])
-def site(message):
-    bot.reply_to(message, '<b>Открытие...</b>', parse_mode='html')
-    webbrowser.open('https://omni.top-academy.ru/login/index#/')
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -48,11 +43,10 @@ def about(message):
         "<b>/start</b> - Стартовая команда, которая приветствует вас и дает инструкции по загрузке документа.\n"
         "<b>/web</b> - Открывает официальный сайт преподавателя OMNI.\n"
         "<b>/help</b> - Выводит информацию о доступных функциях бота.\n"
-        "<b>/compare</b> - Позволяет ввести текст для поиска в загруженном документе. Бот покажет строки, содержащие этот текст.\n"
         "<b>/more</b> - Позволяет получить дополнительные результаты поиска, если они не были выведены сразу.\n"
         "<b>/url</b> - Позволяет отправить ссылку на файл (Google Docs, PDF, Word и другие), который бот загрузит и проанализирует.\n\n"
         "<b>После загрузки файла:</b>\n"
-        "Вы сможете использовать команды /compare для поиска текста или /check для проверки введенного вами текста с файлом.\n"
+        "Вы сможете использовать команды справа внизу для поиска текста или /check для проверки введенного вами текста с файлом.\n"
     )
     bot.send_message(message.chat.id, help_message, parse_mode='html')
 
@@ -99,8 +93,49 @@ def handle_url(message):
                 doc = Document(BytesIO(response.content))
                 full_text = '\n'.join([para.text for para in doc.paragraphs])
                 bot.send_message(message.chat.id, f"Текст из Word документа:\n{full_text[:1000]}")
-            elif 'html' in content_type:
-                bot.send_message(message.chat.id, "Документ HTML (например, Google Docs) не может быть проанализирован напрямую.")
+            elif 'csv' in content_type:
+                user_id = message.from_user.id
+                user_dir = f'./user_files/{user_id}'
+
+                os.makedirs(user_dir, exist_ok=True)
+
+                file_name = sanitize_filename(file_url.split("/")[-1])
+                file_path = os.path.join(user_dir, file_name)
+
+                with open(file_path, 'wb') as f:
+                    f.write(response.content)
+
+                try:
+                    df = pd.read_csv(file_path)
+                    uploaded_file_path = file_path
+                    all_matching_rows = []
+                    bot.send_message(message.chat.id, f"CSV файл загружен: {file_name}. Пример данных:\n{df.head()}")
+                except Exception as e:
+                    bot.send_message(message.chat.id, f"Ошибка при обработке CSV файла: {e}")
+                    return
+            elif 'vnd.ms-powerpoint' in content_type or 'presentation' in content_type:
+                user_id = message.from_user.id
+                user_dir = f'./user_files/{user_id}'
+
+                os.makedirs(user_dir, exist_ok=True)
+
+                file_name = sanitize_filename(file_url.split("/")[-1])
+                file_path = os.path.join(user_dir, file_name)
+
+                with open(file_path, 'wb') as f:
+                    f.write(response.content)
+
+                try:
+                    prs = Presentation(file_path)
+                    all_text = []
+                    for slide in prs.slides:
+                        for shape in slide.shapes:
+                            if hasattr(shape, "text"):
+                                all_text.append(shape.text)
+                    bot.send_message(message.chat.id, "Текст из PowerPoint презентации:\n" + "\n".join(all_text[:1000]))
+                except Exception as e:
+                    bot.send_message(message.chat.id, f"Ошибка при обработке PowerPoint файла: {e}")
+                    return
             else:
                 bot.send_message(message.chat.id, "Файл имеет неподдерживаемый формат или не может быть проанализирован.")
         else:
@@ -137,8 +172,36 @@ def handle_document(message):
             markup.add(types.KeyboardButton("Проверить наличие текста в файле"))
             markup.add(types.KeyboardButton("Проверить правильность текста"))
             bot.send_message(message.chat.id, "Выберите один из вариантов:", reply_markup=markup)
+        elif file_name.endswith('.csv'):
+            df = pd.read_csv(file_path)
+            uploaded_file_path = file_path
+            all_matching_rows = []
+            bot.send_message(message.chat.id, f"CSV файл загружен и сохранен как {file_name}. Пример данных:\n{df.head()}")
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup.add(types.KeyboardButton("Проверить наличие текста в файле"))
+            markup.add(types.KeyboardButton("Проверить правильность текста"))
+            bot.send_message(message.chat.id, "Выберите один из вариантов:", reply_markup=markup)
+        elif file_name.endswith('.pdf'):
+            with open(file_path, 'rb') as f:
+                reader = PdfReader(f)
+                full_text = ""
+                for page in reader.pages:
+                    full_text += page.extract_text()
+            bot.send_message(message.chat.id, f"Текст из PDF файла:\n{full_text[:1000]}")
+        elif file_name.endswith('.pptx'):
+            prs = Presentation(file_path)
+            all_text = []
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text"):
+                        all_text.append(shape.text)
+            bot.send_message(message.chat.id, "Текст из PowerPoint файла:\n" + "\n".join(all_text[:1000]))
+        elif file_name.endswith('.docx'):
+            doc = Document(file_path)
+            full_text = '\n'.join([para.text for para in doc.paragraphs])
+            bot.send_message(message.chat.id, f"Текст из Word документа:\n{full_text[:1000]}")
         else:
-            bot.send_message(message.chat.id, "Поддерживаются только Excel файлы (.xlsx или .xls).")
+            bot.send_message(message.chat.id, "Поддерживаются только Excel файлы, CSV, текстовые файлы и PowerPoint.")
     except Exception as e:
         bot.send_message(message.chat.id, f"Ошибка при обработке файла: {e}")
 
@@ -147,12 +210,22 @@ def compare_text(message):
     global df, all_matching_rows
 
     if df is None:
-        bot.send_message(message.chat.id, "Сначала загрузите файл.")
+        bot.send_message(message.chat.id, "Сначала загрузите файл, чтобы я мог выполнить поиск.")
         return
 
     bot.send_message(message.chat.id, "Введите текст для сравнения с данными из документа:")
 
     bot.register_next_step_handler(message, process_comparison)
+
+@bot.message_handler(func=lambda message: message.text == "Проверить правильность текста")
+def check_text_correctness(message):
+    if df is None:
+        bot.send_message(message.chat.id, "Сначала загрузите файл, чтобы я мог проверить правильность текста.")
+        return
+
+    bot.send_message(message.chat.id, "Введите текст для проверки на наличие ошибок:")
+
+    bot.register_next_step_handler(message, process_text_correction)
 
 def process_comparison(message):
     global df, all_matching_rows
@@ -160,16 +233,17 @@ def process_comparison(message):
     user_text = message.text.strip()
     matching_rows = []
 
-    for column in df.columns:
-        column_data = df[column].astype(str)
+    if isinstance(df, pd.DataFrame):
+        for column in df.columns:
+            column_data = df[column].astype(str)
 
-        matching_column_rows = df[column_data.str.contains(user_text, na=False, case=False, regex=True)]
+            matching_column_rows = df[column_data.str.contains(user_text, na=False, case=False, regex=True)]
 
-        if not matching_column_rows.empty:
-            for index, row in matching_column_rows.iterrows():
-                context = f"Столбец: {column}\n"
-                context += f"Строка {index}: {row[column]}\n"
-                matching_rows.append(context)
+            if not matching_column_rows.empty:
+                for index, row in matching_column_rows.iterrows():
+                    context = f"Столбец: {column}\n"
+                    context += f"Строка {index}: {row[column]}\n"
+                    matching_rows.append(context)
 
     if matching_rows:
         all_matching_rows = matching_rows
@@ -181,12 +255,6 @@ def process_comparison(message):
     else:
         bot.send_message(message.chat.id, "Текст не найден.")
 
-@bot.message_handler(func=lambda message: message.text == "Проверить правильность текста")
-def check_text_correctness(message):
-    bot.send_message(message.chat.id, "Введите текст для проверки на наличие ошибок:")
-
-    bot.register_next_step_handler(message, process_text_correction)
-
 def process_text_correction(message):
     global df
 
@@ -194,40 +262,27 @@ def process_text_correction(message):
     best_match = None
     best_score = 0
 
-    for column in df.columns:
-        column_data = df[column].astype(str)
+    if isinstance(df, pd.DataFrame):
+        for column in df.columns:
+            column_data = df[column].astype(str)
 
-        for value in column_data:
-            score = fuzz.ratio(user_text.lower(), value.lower())
-            if score > best_score:
-                best_score = score
-                best_match = value
+            for value in column_data:
+                score = fuzz.ratio(user_text.lower(), value.lower())
+                if score > best_score:
+                    best_score = score
+                    best_match = value
 
     if best_score >= 80:
         bot.send_message(message.chat.id, f"Текст совпадает с файлом! Пример: {best_match}")
     else:
         bot.send_message(message.chat.id, "Текст написан неверно. Вот строка, которая максимально похожа:\n" + best_match)
 
-    check_lesson_topic(df, user_text, message)
-
-def check_lesson_topic(df, user_text, message):
-    lesson_keywords = ['урок', 'тема', 'Урок', 'Тема']
-    for column in df.columns:
-        column_data = df[column].astype(str)
-
-        for value in column_data:
-            if any(keyword in value for keyword in lesson_keywords):
-                bot.send_message(message.chat.id, f"Возможно, вы неправильно указали тему урока. В документе найдено: {value}")
-                return
-
-    bot.send_message(message.chat.id, "Тема урока не была найдена в документе.")
-
 @bot.message_handler(commands=['more'])
 def more_results(message):
     global all_matching_rows
 
     if not all_matching_rows:
-        bot.send_message(message.chat.id, "Сначала выполните команду /compare, чтобы найти совпадения.")
+        bot.send_message(message.chat.id, "Сначала выполните команду сравнения справа внизу, чтобы найти совпадения.")
         return
 
     bot.send_message(message.chat.id, "Вот все совпадения:")
